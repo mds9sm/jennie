@@ -1,0 +1,28 @@
+.env
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.vite/
+pgdata/
+
+.claude/
+
+# Generated knowledge base files — all KB data comes from S3 (Airflow DAGs build + upload)
+# Only CLAUDE.md (static agent persona) stays in the repo
+backend/knowledge/transforms/
+backend/knowledge/views/
+backend/knowledge/catalog.json
+backend/knowledge/transforms_index.json
+backend/knowledge/lineage.json
+backend/knowledge/metrics.json
+backend/knowledge/coverage.json
+backend/knowledge/domo_catalog.json
+backend/knowledge/enrichment_report.json
+backend/knowledge/event_schemas.json
+backend/knowledge/glossary.yaml
+backend/knowledge/knowledge_summary.json
+backend/knowledge/metadata_dags.json
+backend/knowledge/mwaa_environments.json
+backend/knowledge/statsig.json
+backend/knowledge/_manifest.json

@@ -1,0 +1,77 @@
+platform-api:
+  services:
+    - name: data-mcp
+      replicaCount: 1
+      autoscaling:
+        enabled: true
+        minReplicas: 1
+        maxReplicas: 3
+        targetCPUUtilizationPercentage: 70
+
+      image:
+        repository: 111111111111.dkr.ecr.us-west-2.amazonaws.com/data-mcp
+        tag: latest
+        pullPolicy: Always
+
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+      ingress:
+        enabled: true
+        configs:
+          - annotations:
+              kubernetes.io/ingress.class: mcp
+              nginx.ingress.kubernetes.io/rewrite-target: /$2
+              nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+              nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+            hosts:
+              - host: "*.example.com"
+                paths:
+                  - path: /data-mcp(/|$)(.*)
+                    pathType: Prefix
+
+      containerPort: 8000
+
+      containerEnvironmentVariables:
+        plain:
+          REDSHIFT_MODE: "real"
+          REDSHIFT_DATABASE: "dev"
+          MWAA_ENV_NAME: "nonprod-airflow-mwaa"
+          PUBLIC_BASE_URL: "https://dev-apis.example.com/genie"
+        secretsOperator:
+          data-mcp-redshift:
+            pod: data
+            location: /genie/data-mcp/np/redshift
+            params:
+              REDSHIFT_HOST: host
+              REDSHIFT_PORT: port
+              REDSHIFT_USER: username
+              REDSHIFT_PASSWORD: password
+          data-mcp-token-secret:
+            pod: data
+            location: /genie/data-mcp/token-secret
+            params:
+              GENIE_TOKEN_SECRET: secret
+
+      # IRSA — pod needs MWAA read access
+      serviceAccountAnnotations:
+        eks.amazonaws.com/role-arn: "arn:aws:iam::111111111111:role/data-mcp-np"
+
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 10
+        periodSeconds: 30
+
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 5
+        periodSeconds: 10

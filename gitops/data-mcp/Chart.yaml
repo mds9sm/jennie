@@ -1,0 +1,14 @@
+apiVersion: v2
+name: data-mcp
+description: Jennie Data MCP — thin Redshift + MWAA access service for claude.ai integration
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+dependencies:
+  - name: platform-api
+    version: "^3.0.0"
+    repository: "https://helm.example.com/charts"
+  - name: crossplane-tf
+    version: "^6.0.0"
+    repository: "https://helm.example.com/charts"
+    condition: crossplane.enabled

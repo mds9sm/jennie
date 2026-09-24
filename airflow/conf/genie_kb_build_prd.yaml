@@ -1,0 +1,81 @@
+# Genie KB Build — Production
+# Runs in prd MWAA, fetches prd transforms, Redshift metadata, DOMO S3, AI enrichment
+# Writes to S3 for Genie API to read
+
+dag_id: GENIE_KB_BUILD__prd
+description: "Build Genie knowledge base from production sources"
+schedule_interval: "0 7 * * *"  # Daily at 7 AM UTC (1 hour after np)
+tags:
+  - genie
+  - knowledge-base
+  - prod
+
+owner: data-engineering
+retries: 1
+retry_delay_minutes: 5
+
+environment: prd
+mwaa_environment: prod-airflow-mwaa
+
+# S3 output
+s3_bucket: dw-data-share-bucket
+s3_prefix: genie-kb/prd
+
+# Postgres connection (Genie DB — for kb_builds, glossary_entries)
+postgres_conn_id: genie_postgres
+
+# Bedrock (AI enrichment)
+bedrock_region: us-west-2
+bedrock_model_fast: us.anthropic.claude-sonnet-4-20250514-v1:0
+bedrock_model_heavy: us.anthropic.claude-opus-4-6-v1
+enrichment_model: sonnet
+
+# Git repo
+repo_url: https://github.com/your-org/data-platform-dags
+repo_branch: main
+
+# Sources to include
+sources:
+  mwaa: true
+  redshift: true
+  repo: true
+  swagger: true
+  statsig: false
+  domo_parse: true
+  domo_s3: true
+  glossary: true
+  ai_enrichment: true
+  profiling: false  # profiling runs on np only
+
+# Redshift (prd only)
+redshift:
+  conn_id: prd_redshift  # Airflow connection for prod Redshift
+  databases:
+    - prd_dw
+    - prd_domo
+    - prd_statsig
+    - prd_data_lake
+    - prd_braze
+    - prd_personalize
+    - prd_events
+
+# MWAA fetch settings
+mwaa_fetch:
+  max_dags: 500
+  sql_extraction: true
+  metadata_only_types:
+    - domo
+    - events
+    - ingest_sqs
+    - personalization
+    - statsig
+    - braze
+    - extract
+    - glue
+
+# Swagger endpoint
+swagger_url: https://dev55-apis.example.com/events/swagger/v1/swagger.json
+
+# AI enrichment budget
+enrichment_token_budget: 100000
+glossary_batch_size: 10

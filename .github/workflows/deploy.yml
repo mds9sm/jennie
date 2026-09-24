@@ -1,0 +1,180 @@
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/README.md"
+      - "docs/**"
+
+env:
+  GITOPS_REPO: your-org/gitops-config
+  ECR_REPOSITORY_BACKEND: genie-api
+  ECR_REPOSITORY_FRONTEND: genie-web
+  ECR_REPOSITORY_DATA_MCP: data-mcp-api
+
+jobs:
+  release-version:
+    runs-on: ubuntu-latest
+    outputs:
+      short-sha: ${{steps.set-outputs.outputs.short-sha}}
+      semver: ${{steps.gitversion.outputs.semVer}}
+      major-minor-patch: ${{steps.gitversion.outputs.majorMinorPatch}}
+      docker-tag: ${{steps.set-outputs.outputs.docker-tag}}
+      build-metadata: ${{steps.set-outputs.outputs.build-metadata}}
+      build-date: ${{steps.set-outputs.outputs.build-date}}
+      build-url: ${{github.event.repository.html_url}}/actions/runs/${{github.run_id}}
+      vcs-url: ${{github.event.repository.html_url}}/commit/${{github.sha}}
+      vcs-sha: ${{github.sha}}
+      vcs-ref: ${{github.ref}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: "GitVersion: Setup"
+        uses: gittools/actions/gitversion/setup@v3.0.0
+        with:
+          versionSpec: "5.12.0"
+      - name: "GitVersion: Execute"
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.0.0
+      - name: Set Outputs
+        id: set-outputs
+        run: |
+          shortSha=$(git rev-parse --short ${{ github.sha }})
+          buildMetadata="gh${{ github.run_number }}.${{ github.run_attempt }}-${shortSha}"
+          echo "short-sha=$shortSha" >> "$GITHUB_OUTPUT"
+          echo "docker-tag=${{ steps.gitversion.outputs.majorMinorPatch }}_$buildMetadata" >> "$GITHUB_OUTPUT"
+          echo "build-metadata=$buildMetadata" >> "$GITHUB_OUTPUT"
+          echo "build-date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$GITHUB_OUTPUT"
+
+  build-app:
+    permissions:
+      id-token: write
+      contents: write
+    needs:
+      - release-version
+    name: Build and push Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "arn:aws:iam::333333333333:role/ecr-push-role"
+          aws-region: us-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # Build and push Backend
+      - name: Build and push Backend image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{env.ECR_REPOSITORY_BACKEND}}
+          IMAGE_TAG: ${{ needs.release-version.outputs.docker-tag }}
+        run: |
+          docker build --no-cache \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            backend
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # Build and push Frontend
+      - name: Build and push Frontend image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{env.ECR_REPOSITORY_FRONTEND}}
+          IMAGE_TAG: ${{ needs.release-version.outputs.docker-tag }}
+        run: |
+          docker build --no-cache \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            frontend
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # Build and push Data MCP
+      # NOTE: continue-on-error until SRE provisions the data-mcp-api
+      # ECR repo. Without this, a missing repo halts the workflow before the
+      # gitops auto-PR step runs, stranding every merge. The gitops update
+      # step below skips the data-mcp tag bump when this step fails so ArgoCD
+      # never points at an image that wasn't actually pushed.
+      - name: Build and push Data MCP image
+        id: data_mcp_build
+        continue-on-error: true
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{env.ECR_REPOSITORY_DATA_MCP}}
+          IMAGE_TAG: ${{ needs.release-version.outputs.docker-tag }}
+        run: |
+          docker build --no-cache \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            data-mcp
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # GitOps deployment
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - run: npm install @octokit/auth-app@v5.0.4
+      - name: Generate Token
+        id: gt
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { createAppAuth } = require("@octokit/auth-app");
+            let pem = `${{secrets.GITOPS_DEPLOY_APP_PEM}}`;
+            let app_id = "${{secrets.GITOPS_DEPLOY_APP_ID}}";
+            let install_id = "${{secrets.GITOPS_DEPLOY_INSTALL_ID}}";
+            const auth = createAppAuth({
+              appId: app_id,
+              privateKey: pem,
+              installationId: install_id
+            });
+            const tokenPayload = await auth({ type: "installation" });
+            core.setOutput("token", tokenPayload.token)
+
+      - name: Checkout GitOps repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{env.GITOPS_REPO}}
+          token: ${{steps.gt.outputs.token}}
+          ref: main
+          fetch-depth: 0
+
+      - name: Update tags in helm chart
+        env:
+          DATA_MCP_OUTCOME: ${{ steps.data_mcp_build.outcome }}
+        run: |
+          # Update backend tag
+          backend_file="${{env.ECR_REPOSITORY_BACKEND}}/values-dev.yaml"
+          if [ -f "$backend_file" ]; then
+            sed -i 's/\(tag:\).*/\1 "'"${{ needs.release-version.outputs.docker-tag }}"'"/' $backend_file
+          fi
+
+          # Update frontend tag
+          frontend_file="${{env.ECR_REPOSITORY_FRONTEND}}/values-dev.yaml"
+          if [ -f "$frontend_file" ]; then
+            sed -i 's/\(tag:\).*/\1 "'"${{ needs.release-version.outputs.docker-tag }}"'"/' $frontend_file
+          fi
+
+          # Update data-mcp tag — only if the data-mcp push actually succeeded.
+          # If it failed (e.g. ECR repo not provisioned), keep the existing tag
+          # so ArgoCD doesn't point at a non-existent image.
+          data_mcp_file="${{env.ECR_REPOSITORY_DATA_MCP}}/values-dev.yaml"
+          if [ -f "$data_mcp_file" ] && [ "$DATA_MCP_OUTCOME" = "success" ]; then
+            sed -i 's/\(tag:\).*/\1 "'"${{ needs.release-version.outputs.docker-tag }}"'"/' $data_mcp_file
+          fi
+
+      - name: Create dev deployment pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "Tag update for release your-org-genie:${{ needs.release-version.outputs.docker-tag }}"
+          title: "Deploy Jennie to dev"
+          body: |
+            Application: Jennie
+            Backend: ${{env.ECR_REPOSITORY_BACKEND}}:${{ needs.release-version.outputs.docker-tag }}
+            Frontend: ${{env.ECR_REPOSITORY_FRONTEND}}:${{ needs.release-version.outputs.docker-tag }}
+            Data MCP: ${{env.ECR_REPOSITORY_DATA_MCP}}:${{ needs.release-version.outputs.docker-tag }}
+            Version: ${{ needs.release-version.outputs.docker-tag }}
+          branch: deploy-to-dev-your-org-genie
+          token: ${{steps.gt.outputs.token}}

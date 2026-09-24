@@ -1,0 +1,55 @@
+# Production deployment — uses external RDS PostgreSQL
+# Build: docker compose -f docker-compose.prod.yml build
+# Run:   docker compose -f docker-compose.prod.yml up -d
+#
+# Required environment variables (set in .env or infra config):
+#   DATABASE_URL        — RDS connection string (postgresql://user:pass@host:5432/genie)
+#   ANTHROPIC_API_KEY   — or use Bedrock (AI_PROVIDER=bedrock)
+#   AI_PROVIDER         — "bedrock" (default) or "anthropic"
+#   REPO_URL            — GitHub repo URL for KB
+#   GITHUB_TOKEN        — GitHub PAT with repo scope
+#
+# Optional:
+#   DOMO_DEVELOPER_TOKEN — DOMO developer token (enables DOMO MCP: dataset search, metadata, SQL query)
+#   DOMO_HOST            — DOMO instance hostname (default: your-org.domo.com)
+#   OKTA_CLIENT_ID      — Okta OIDC app client ID (enables SSO login)
+#   OKTA_CLIENT_SECRET  — Okta OIDC app client secret
+#   OKTA_ISSUER         — Okta issuer URL (default: https://your-org.okta.com/oauth2/default)
+#   APP_URL             — Production URL (default: https://genie.example.com)
+#   BEDROCK_MODEL       — Bedrock model ID (default: us.anthropic.claude-opus-4-6-v1)
+#   BEDROCK_REGION      — AWS region for Bedrock (default: us-west-2)
+
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # DATABASE_URL must point to RDS (not local postgres)
+      DATABASE_URL: ${DATABASE_URL}
+    volumes:
+      # Persistent volumes for repo clones and knowledge base
+      - repo_data:/app/data-repo
+      - repo_kb:/app/data-repo-kb
+      - repo_worktrees:/app/data-repo-worktrees
+      - knowledge_data:/app/knowledge
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  repo_data:
+  repo_kb:
+  repo_worktrees:
+  knowledge_data:

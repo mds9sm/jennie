@@ -1,0 +1,69 @@
+# Genie KB Build — Nonprod
+# Runs in np MWAA, fetches np transforms, repo, swagger, DOMO, glossary, AI enrichment
+# Writes to S3 for Genie API to read
+
+dag_id: GENIE_KB_BUILD__np
+description: "Build Genie knowledge base from nonprod sources"
+schedule_interval: "0 6 * * *"  # Daily at 6 AM UTC
+tags:
+  - genie
+  - knowledge-base
+  - nonprod
+
+owner: data-engineering
+retries: 1
+retry_delay_minutes: 5
+
+environment: np
+mwaa_environment: nonprod-airflow-mwaa
+
+# S3 output
+s3_bucket: dw-data-share-bucket
+s3_prefix: genie-kb/np
+
+# Postgres connection (Genie DB — for kb_builds, glossary_entries)
+postgres_conn_id: genie_postgres
+
+# Bedrock (AI enrichment)
+bedrock_region: us-west-2
+bedrock_model_fast: us.anthropic.claude-sonnet-4-20250514-v1:0
+bedrock_model_heavy: us.anthropic.claude-opus-4-6-v1
+enrichment_model: sonnet  # sonnet for cost efficiency
+
+# Git repo
+repo_url: https://github.com/your-org/data-platform-dags
+repo_branch: main
+
+# Sources to include
+sources:
+  mwaa: true
+  redshift: false
+  repo: true
+  swagger: true
+  statsig: false  # needs Console API key — configure if available
+  domo_parse: true
+  domo_s3: true
+  glossary: true
+  ai_enrichment: true
+  profiling: true  # via np datashare to prod
+
+# MWAA fetch settings
+mwaa_fetch:
+  max_dags: 500
+  sql_extraction: true
+  metadata_only_types:
+    - domo
+    - events
+    - ingest_sqs
+    - personalization
+    - statsig
+    - braze
+    - extract
+    - glue
+
+# Swagger endpoint
+swagger_url: https://dev55-apis.example.com/events/swagger/v1/swagger.json
+
+# AI enrichment budget
+enrichment_token_budget: 100000
+glossary_batch_size: 10

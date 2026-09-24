@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: genie
+      POSTGRES_USER: genie
+      POSTGRES_PASSWORD: genie_local
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U genie"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # DATABASE_URL: postgresql+asyncpg://genie:genie_local@postgres:5432/genie  # using .env for K8s RDS
+      DOMO_VERIFY_SSL: "false"  # Corporate proxy re-signs certs; prod uses true + injected CA
+    volumes:
+      - ./backend:/app
+      - ./backend/knowledge:/app/knowledge
+      - ~/.aws:/root/.aws:ro
+      - repo_data:/app/data-repo
+      - repo_kb:/app/data-repo-kb
+      - repo_worktrees:/app/data-repo-worktrees
+      - ./docs:/app/docs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  data-mcp:
+    build:
+      context: ./data-mcp
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      REDSHIFT_MODE: "mock"
+      REDSHIFT_HOST: ""
+      REDSHIFT_USER: ""
+      REDSHIFT_PASSWORD: ""
+      REDSHIFT_DATABASE: "dev"
+      MWAA_ENV_NAME: ""
+      PUBLIC_BASE_URL: "http://localhost:8000"
+      # DATABASE_URL from .env is used for token secret derivation (must match backend)
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3333:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  repo_data:
+  repo_kb:
+  repo_worktrees:

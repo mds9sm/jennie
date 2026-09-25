@@ -26,3 +26,5 @@ backend/knowledge/metadata_dags.json
 backend/knowledge/mwaa_environments.json
 backend/knowledge/statsig.json
 backend/knowledge/_manifest.json
+
+.DS_Store
